@@ -38,7 +38,7 @@ def load_data(file):
 
     # Clean up
     if "Date" in df.columns:
-        df = df[~df["Date"].isna()]
+        df = df[~df["Date"].isna()]  # drop empty date rows (like last blank row)
         df["Date"] = pd.to_datetime(df["Date"]).dt.date
 
     if "Walk-in Customer" in df.columns:
@@ -89,11 +89,21 @@ def main():
         st.warning("No valid data found in the file.")
         return
 
-    # Sidebar: Filters
+    # Full coverage dates (before filters) for 'till date' info
+    full_min_date = df["Date"].min() if "Date" in df.columns else None
+    full_max_date = df["Date"].max() if "Date" in df.columns else None
+
+    if full_min_date and full_max_date:
+        st.caption(
+            f"Data available from **{full_min_date.strftime('%d %b %Y')}** "
+            f"to **{full_max_date.strftime('%d %b %Y')}** (last recorded working/holiday date)."
+        )
+
+    # Sidebar: Filters (based on full data)
     st.sidebar.header("Filters")
     if "Date" in df.columns:
-        min_date = df["Date"].min()
-        max_date = df["Date"].max()
+        min_date = full_min_date
+        max_date = full_max_date
 
         date_range = st.sidebar.date_input(
             "Select date range",
@@ -114,18 +124,30 @@ def main():
         return
 
     # KPI Section
-    col1, col2, col3, col4 = st.columns(4)
-
+    # 0 walk-ins = holiday
     total_walkins = int(df["Walk-in Customer"].sum()) if "Walk-in Customer" in df.columns else 0
     total_testdrives = int(df["Test Drive"].sum()) if "Test Drive" in df.columns else 0
+
     total_days = df["Date"].nunique() if "Date" in df.columns else len(df)
-    avg_walkins = total_walkins / total_days if total_days > 0 else 0
+    working_days = df[df["Walk-in Customer"] > 0]["Date"].nunique()
+    holiday_days = df[df["Walk-in Customer"] == 0]["Date"].nunique()
+
+    # Average walk-ins per working day only (holidays excluded)
+    avg_walkins = total_walkins / working_days if working_days > 0 else 0
     overall_conversion = (total_testdrives / total_walkins * 100) if total_walkins > 0 else 0
+
+    col1, col2, col3, col4, col5 = st.columns(5)
 
     col1.metric("Total Walk-in Customers", f"{total_walkins}")
     col2.metric("Total Test Drives", f"{total_testdrives}")
     col3.metric("Overall Conversion Rate", f"{overall_conversion:.1f}%")
-    col4.metric("Average Walk-ins per Day", f"{avg_walkins:.1f}")
+    col4.metric("Avg Walk-ins per Working Day", f"{avg_walkins:.1f}")
+    col5.metric("Holidays (0 Walk-ins)", f"{holiday_days}")
+
+    st.markdown(
+        "_Note: Days with **0 walk-ins** are treated as **holidays** and are **excluded** from the "
+        "average walk-ins per day metric._"
+    )
 
     st.markdown("---")
 
@@ -161,9 +183,9 @@ def main():
                 Walk_ins=("Walk-in Customer", "sum"),
                 Test_Drives=("Test Drive", "sum"),
                 Avg_Conversion=("Conversion Rate", "mean"),
+                Holiday_Days=("Walk-in Customer", lambda x: (x == 0).sum()),
             )
 
-            # Order by actual weekday sequence
             weekday_order = [
                 "Monday",
                 "Tuesday",
@@ -181,6 +203,9 @@ def main():
             st.markdown("**Average Conversion Rate by Weekday (%)**")
             if "Avg_Conversion" in agg.columns:
                 st.bar_chart(agg[["Avg_Conversion"]])
+
+            st.markdown("**Number of Holidays (0 Walk-ins) by Weekday**")
+            st.bar_chart(agg[["Holiday_Days"]])
 
     with tab3:
         st.subheader("Daily Conversion Rate (%)")
